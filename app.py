@@ -44,35 +44,43 @@ def delete_session(session_id):
     return jsonify({"删除": True})
 
 # —— —— 对话接入检索 —— ——
-def _build_system_prompt(context_texts):
+def _build_system_prompt(context_texts, use_knowledge_base=True):
     if context_texts:
         ctx = "\n---\n".join(context_texts)
         return (
             "你是一个知识库助手。请仅根据以下资料回答用户问题，"
-            "如果资料中没有答案，请如实告知用户，而不要编造答案。\n\n{ctx}"
+            "如果资料中没有答案，请如实告知用户，而不要编造答案。\n\n"
             f"【参考资料】\n{ctx}"
         )
+    if not use_knowledge_base:
+        return "你是一个有帮助的 AI 助手，请直接使用通用知识回答用户问题。"
     return "你是一个知识库助手。知识库当前为空，请告知用户先上传文档。"
 
 # —— —— 聊天接口（SSE流式）—— ——
 # —— ——对话接入检索 加形参top_k
-def _stream_chat(history_messages, query, top_k=None):
-    # —— ——对话接入检索 加形参top_k
-    if top_k is None:
-        top_k = config.RETRIEVAL_TOP_K
+def _stream_chat(history_messages, query, top_k=None, use_knowledge_base=True):
+    try:
+        if use_knowledge_base:
+            if top_k is None:
+                top_k = config.RETRIEVAL_TOP_K
+            retrieved, scores = rag.retrieve(query, top_k=top_k)
+        else:
+            retrieved, scores = [], []
+        context_texts = [c["text"] for c in retrieved]
+        system = _build_system_prompt(context_texts, use_knowledge_base)
 
-    # —— ——对话接入检索  检索相关文档片段
-    retrieved, scores = rag.retrieve(query, top_k=top_k)
-    context_texts = [c["text"] for c in retrieved]
-    system = _build_system_prompt(context_texts)
-
-    # 组装消息：system + 历史消息 + 当前问题
-    messages = [{"role": "system", "content": system}]
-    for m in history_messages:
-        messages.append({"role": m["role"], "content": m["content"]})
+        messages = [{"role": "system", "content": system}]
+        role_aliases = {
+            "msg--user": "user",
+            "msg--ai": "assistant",
+            "用户": "user",
+            "助手": "assistant",
+        }
+        for message in history_messages:
+            role = role_aliases.get(message["role"], message["role"])
+            messages.append({"role": role, "content": message["content"]})
         messages.append({"role": "user", "content": query})
 
-    try:
         stream = llm.get_client().chat.completions.create(
             model=config.DEEPSEEK_MODEL,
             messages=messages,
@@ -96,27 +104,8 @@ def _stream_chat(history_messages, query, top_k=None):
     except Exception as e:
         payload = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
         yield f"data: {payload}\n\n"
+    finally:
         yield "data: [DONE]\n\n"
-
-    # role_aliases = {
-    #     "用户": "user",
-    #     "msg--user": "user",
-    #     "助手": "assistant",
-    #     "msg--ai": "assistant",
-    # }
-    # for m in history_messages:
-    #     role = role_aliases.get(m["role"], m["role"])
-    #     messages.append({"role": role, "content": m["content"]})
-    # messages.append({"role": "user", "content": query})
-
-    # try:
-    #     for token in llm.chat_stream(messages):
-    #         payload = json.dumps({"type": "content", "text": token}, ensure_ascii=False)
-    #         yield f"data: {payload}\n\n"
-    # except Exception as e:
-    #     payload = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
-    #     yield f"data: {payload}\n\n"
-    # yield "data: [DONE]\n\n"
 
 
 @app.route('/api/chat/stream', methods=['POST'])
@@ -125,6 +114,7 @@ def chat_stream():
     # 获取用户输入的消息和会话ID
     query = data.get("message", "").strip()
     session_id = data.get("session_id", "").strip()
+    use_knowledge_base = data.get("use_knowledge_base", True) is True
 
     # 如果没有当前会话
     if not query:
@@ -150,7 +140,9 @@ def chat_stream():
         failed = False
 
         # 详细处理SSE每一段消息
-        for sse_line in _stream_chat(history, query):
+        for sse_line in _stream_chat(
+            history, query, use_knowledge_base=use_knowledge_base
+        ):
             raw = sse_line.removeprefix("data: ").strip()
             if raw and raw != "[DONE]":
                 event = json.loads(raw)

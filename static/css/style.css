@@ -265,6 +265,13 @@ p {
   overflow-wrap: anywhere;
 }
 
+.knowledge-base-notice {
+  margin: 10px 0 0;
+  color: var(--sidebar-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 /* =========================================================
    按钮
    ========================================================= */
@@ -466,8 +473,27 @@ p {
 
 .composer__inner {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 12px;
+}
+
+.composer__mode {
+  display: flex;
+  flex: 0 0 100%;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.composer__mode select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text);
+  font: inherit;
 }
 
 .composer__input {

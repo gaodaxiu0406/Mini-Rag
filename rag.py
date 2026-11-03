@@ -99,7 +99,8 @@ def _re_encode_all():
 def retrieve(query, top_k=RETRIEVAL_TOP_K):
   """将查询转为TF-IDF向量，与所有chunk的向量计算余弦相似度，返回最相似的top_k个chunk"""
   all_chunks = storage.get_all_chunks()
-  if not all_chunks: return []
+  if not all_chunks:
+    return [], []
 
   vec = get_vectorizer()
   query_vec = vec.transform([query])

@@ -21,6 +21,8 @@
         const fileInput = $("#file-input");
         const uploadStatus = $("#upload-status");
         const btnUpload = $("#btn-upload");
+        const knowledgeBaseNotice = $("#knowledge-base-notice");
+        const answerMode = $("#answer-mode");
 
         /**
          * api请求方法
@@ -152,6 +154,15 @@
             li.appendChild(del);
             docList.appendChild(li);
         })
+        const hasDocuments = docs.length > 0;
+        knowledgeBaseNotice.hidden = hasDocuments;
+        answerMode.querySelector('option[value="knowledge"]').disabled = !hasDocuments;
+        if (!hasDocuments) {
+            answerMode.value = "deepseek";
+        } else if (answerMode.value === "deepseek" && state.documentsAvailable === false) {
+            answerMode.value = "knowledge";
+        }
+        state.documentsAvailable = hasDocuments;
     }
 
     btnUpload.addEventListener("click", () => fileInput.click());
@@ -210,6 +221,7 @@
                 body: JSON.stringify({
                     message: query,
                     session_id: state.activeSessionId,
+                    use_knowledge_base: answerMode.value === "knowledge",
                 }),
                 signal: ctrl.signal
             });

@@ -50,6 +50,9 @@
         <button id="btn-upload" class="btn btn--ghost" type="button">上传文档</button>
         <input id="file-input" type="file" accept=".txt,.md,text/plain" hidden />
         <p id="upload-status" class="upload-status" role="status" aria-live="polite"></p>
+        <p id="knowledge-base-notice" class="knowledge-base-notice" role="status" aria-live="polite" hidden>
+          当前知识库为空，请上传您的知识库内容；如果暂时不上传，也可以选择使用 DeepSeek 模型回答问题。
+        </p>
         <ul id="doc-list" class="doc-list" aria-label="已上传文档"></ul>
       </div>
     </aside>
@@ -94,6 +97,13 @@
 
       <footer class="composer">
         <form class="composer__inner" action="#" method="post">
+          <label class="composer__mode" for="answer-mode">
+            回答方式
+            <select id="answer-mode" name="answer-mode">
+              <option value="knowledge">知识库问答</option>
+              <option value="deepseek">DeepSeek 通用回答</option>
+            </select>
+          </label>
           <textarea
             id="user-input"
             class="composer__input"
