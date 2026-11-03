@@ -13,3 +13,7 @@ data/
 # 编辑器与系统文件
 .DS_Store
 .vscode/
+
+# 备份文件
+app copy.py
+app-1.py
