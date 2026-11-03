@@ -39,7 +39,7 @@ Flask app.py
 要求：Python 3.9+
 
 ```bash
-git clone https://github.com/<your-name>/mini-rag.git
+git clone https://github.com/gaodaxiu0406/Mini-Rag.git
 cd mini-rag
 
 python3 -m venv .venv
@@ -132,3 +132,7 @@ TF-IDF 的向量维度依赖语料词汇表。新增文档若只对新 chunk 编
 ## License
 
 MIT
+
+---
+
+如果这个项目对你有帮助，欢迎点一个 ⭐ **Star**。你的一个星，是对独立开发者最直接的鼓励；发现问题或有想法，也欢迎提 Issue。
