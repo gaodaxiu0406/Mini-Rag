@@ -1,0 +1,15 @@
+# 环境与密钥
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# 运行时数据（文档库 / 向量器 / 会话记录）
+data/
+
+# 编辑器与系统文件
+.DS_Store
+.vscode/
