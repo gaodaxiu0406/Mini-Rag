@@ -105,6 +105,15 @@ def add_document(filename, chunks):
     save_docstore(ds)
     return doc_id
 
+def update_chunk_embeddings(embeddings):
+    """Replace all chunk embeddings and persist the docstore once."""
+    ds = get_docstore()
+    if len(embeddings) != len(ds["chunks"]):
+        raise ValueError("Embedding count does not match the stored chunk count.")
+    for chunk, embedding in zip(ds["chunks"], embeddings):
+        chunk["embedding"] = embedding
+    save_docstore(ds)
+
 # 删除
 def remove_document(filename):
     """按文件名删除文档及其所有chunk"""

@@ -5,6 +5,7 @@ import config
 import llm
 import storage
 import rag
+from document_parser import extract_document_text
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 
@@ -194,7 +195,10 @@ def upload_document():
     if not f.filename:
         return jsonify({"error": "No filename"}), 400
 
-    content = f.read().decode('utf-8', errors='replace')
+    try:
+        content = extract_document_text(f.filename, f.read())
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
     count = rag.index_document(f.filename, content)
     return jsonify({"filename": f.filename, "chunk_count": count})
 

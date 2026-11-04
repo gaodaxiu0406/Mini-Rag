@@ -3,6 +3,7 @@ import os
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from scipy.sparse import csr_matrix
 from config import CHUNK_SIZE, CHUNK_OVERLAP, RETRIEVAL_TOP_K, DATA_DIR
 import storage
 
@@ -48,23 +49,8 @@ def index_document(filename, content):
   chunks_texts = split_text(content)
   if not chunks_texts: return 0
 
-  # 用所有新chunk更新词汇表
-  vec = get_vectorizer()
-  vec.fit(chunks_texts)
-  # embeddings = vec.transfore(chunks_texts)
-  embeddings = vec.transform(chunks_texts)
-
-  # 组装chunk对象
-  chunks = []
-  for i, (text, emb) in enumerate(zip(chunks_texts, embeddings)):
-    chunks.append({
-      "text": text,
-      "embedding": emb.toarray()[0].tolist()
-    })
-
+  chunks = [{"text": text, "embedding": []} for text in chunks_texts]
   storage.add_document(filename, chunks)
-
-  # 用全量语料重建向量器，保证所有文档的向量在同一词汇空间
   rebuild_vectorizer()
   _re_encode_all()
 
@@ -75,6 +61,14 @@ def rebuild_vectorizer():
   global _vectorizer
   all_chunks = storage.get_all_chunks()
   texts = [c["text"] for c in all_chunks]
+  if not texts:
+    _vectorizer = TfidfVectorizer(
+      analyzer="char_wb", ngram_range=(2, 4), max_features=10000
+    )
+    if os.path.exists(VECTORIZER_PATH):
+      os.remove(VECTORIZER_PATH)
+    return _vectorizer
+
   _vectorizer = TfidfVectorizer(
     analyzer = "char_wb", ngram_range=(2, 4), max_features = 10000
   )
@@ -90,10 +84,15 @@ def _re_encode_all():
   vec = get_vectorizer()
   texts = [c["text"] for c in all_chunks]
   matrices = vec.transform(texts)
-  ds = storage.get_docstore()
-  for i, row in enumerate(matrices):
-    ds["chunks"][i]["embedding"] = row.toarray()[0].tolist()
-    storage.save_docstore(ds)
+  embeddings = [
+    {
+      "size": matrices.shape[1],
+      "indices": row.indices.tolist(),
+      "values": row.data.tolist(),
+    }
+    for row in matrices
+  ]
+  storage.update_chunk_embeddings(embeddings)
 
 # —— —— 检索函数 —— ——
 def retrieve(query, top_k=RETRIEVAL_TOP_K):
@@ -104,7 +103,23 @@ def retrieve(query, top_k=RETRIEVAL_TOP_K):
 
   vec = get_vectorizer()
   query_vec = vec.transform([query])
-  chunk_vecs = np.array([c["embedding"] for c in all_chunks])
+  chunk_embeddings = [chunk["embedding"] for chunk in all_chunks]
+  if all(isinstance(embedding, dict) for embedding in chunk_embeddings):
+    rows = np.repeat(np.arange(len(chunk_embeddings)), [len(e["indices"]) for e in chunk_embeddings])
+    columns = np.concatenate([
+      np.asarray(embedding["indices"], dtype=np.int32)
+      for embedding in chunk_embeddings
+    ])
+    values = np.concatenate([
+      np.asarray(embedding["values"], dtype=np.float64)
+      for embedding in chunk_embeddings
+    ])
+    chunk_vecs = csr_matrix(
+      (values, (rows, columns)),
+      shape=(len(chunk_embeddings), chunk_embeddings[0]["size"]),
+    )
+  else:
+    chunk_vecs = csr_matrix(chunk_embeddings)
 
   # 余弦相似度（TF-IDF向量已经是L2归一化的，所以直接点积即可）
   sims = cosine_similarity(query_vec, chunk_vecs)[0]
