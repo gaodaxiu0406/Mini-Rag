@@ -13,6 +13,10 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 def index():
     return send_from_directory("static", "index.html")
 
+@app.route('/favicon.ico')
+def favicon():
+    return Response(status=204)
+
 # 会话接口
 @app.route('/api/sessions', methods=['GET'])
 def list_sessions():
@@ -47,40 +51,203 @@ def delete_session(session_id):
 # —— —— 对话接入检索 —— ——
 def _build_system_prompt(context_texts, use_knowledge_base=True):
     if context_texts:
-        ctx = "\n---\n".join(context_texts)
+        ctx = "\n---\n".join(
+            f"【适用机号：{chunk.get('_msn_applicability', '未标注')}】\n{chunk['text']}"
+            for chunk in context_texts
+        )
         return (
-            "你是一个知识库助手。请仅根据以下资料回答用户问题，"
-            "如果资料中没有答案，请如实告知用户，而不要编造答案。\n\n"
+            "你是一个飞机最低设备清单（MEL）手册助手。仅根据提供的手册资料回答，不得编造维修或放行程序。"
+            "回答故障问题时，尽可能完整列出相关 ECAM 警告、MEL 项目、飞机状态和放行条件，保留原文中的编号、限制和交叉引用。"
+            "请汇总参考资料中所有与问题相关的适用 MSN 或 MSN 范围，并按 MSN/范围列出各自对应的问题描述、ECAM 警告、MEL 项目及关键条件；"
+            "适用性为 ALL 的内容单独标明，未标注机号的内容明确写“手册未标注适用机号，需人工核实”。"
+            "不要把不同条目或机号的条件混为一谈，也不要声称已覆盖整个手册；仅报告参考资料中实际检索到的内容。\n\n"
             f"【参考资料】\n{ctx}"
         )
     if not use_knowledge_base:
         return "你是一个有帮助的 AI 助手，请直接使用通用知识回答用户问题。"
     return "你是一个知识库助手。知识库当前为空，请告知用户先上传文档。"
 
+
+def _messages_with_history(history_messages, query, system):
+    messages = [{"role": "system", "content": system}]
+    role_aliases = {
+        "msg--user": "user",
+        "msg--ai": "assistant",
+        "用户": "user",
+        "助手": "assistant",
+    }
+    for message in history_messages:
+        role = role_aliases.get(message["role"], message["role"])
+        messages.append({"role": role, "content": message["content"]})
+    messages.append({"role": "user", "content": query})
+    return messages
+
+
+def _text_batches(texts, max_chars):
+    batches = []
+    current = []
+    current_length = 0
+    for text in texts:
+        if current and current_length + len(text) > max_chars:
+            batches.append("\n\n---\n\n".join(current))
+            current = []
+            current_length = 0
+        current.append(text)
+        current_length += len(text)
+    if current:
+        batches.append("\n\n---\n\n".join(current))
+    return batches
+
+
+def _complete_summary(messages):
+    response = llm.get_client().chat.completions.create(
+        model=config.DEEPSEEK_MODEL,
+        messages=messages,
+        stream=False,
+        temperature=config.DEEPSEEK_TEMPERATURE,
+        max_tokens=config.RETRIEVAL_BATCH_MAX_TOKENS,
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+    if not response.choices:
+        raise RuntimeError("模型未返回批次归纳结果。")
+    text = response.choices[0].message.content
+    if not isinstance(text, str) or not text.strip():
+        raise RuntimeError("模型返回了空的批次归纳结果。")
+    return text.strip()
+
+
+def _summarize_full_document(retrieved, query, history_messages):
+    chunk_texts = [
+        (
+            f"【文件：{chunk.get('filename', '未知')}；"
+            f"片段：{chunk.get('chunk_index', index)}；"
+            f"适用机号：{chunk.get('_msn_applicability', '未标注')}】\n"
+            f"{chunk['text']}"
+        )
+        for index, chunk in enumerate(retrieved, 1)
+    ]
+    batches = _text_batches(chunk_texts, config.RETRIEVAL_BATCH_CHARS)
+    summaries = []
+    for index, batch in enumerate(batches, 1):
+        yield {
+            "type": "progress",
+            "text": f"已检索到 {len(retrieved)} 个片段，正在分批分析第 {index}/{len(batches)} 批。",
+        }
+        summary = _complete_summary([
+            {
+                "role": "system",
+                "content": (
+                    "你是飞机 MEL 手册资料归纳助手。只保留与用户问题直接相关的内容；"
+                    "逐项保留适用 MSN/范围、问题或 ECAM 描述、MEL 编号、飞机状态、放行条件、限制和交叉引用。"
+                    "不同 MSN 或 MEL 条目不得合并条件，不得补充原文没有的信息。"
+                    "若本批无相关资料，只输出 NO_RELEVANT_INFO。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"问题：{query}\n\n请分析以下手册片段：\n{batch}",
+            },
+        ])
+        if summary != "NO_RELEVANT_INFO":
+            summaries.append(summary)
+
+    previous_length = len("\n\n".join(summaries))
+    while previous_length > config.RETRIEVAL_BATCH_CHARS:
+        summary_batches = _text_batches(summaries, config.RETRIEVAL_BATCH_CHARS)
+        reduced = []
+        for index, batch in enumerate(summary_batches, 1):
+            yield {
+                "type": "progress",
+                "text": f"正在合并第 {index}/{len(summary_batches)} 组归纳结果。",
+            }
+            reduced.append(_complete_summary([
+                {
+                    "role": "system",
+                    "content": (
+                        "合并这些飞机 MEL 资料归纳。完整保留所有不同的适用 MSN/范围、问题描述、"
+                        "MEL 编号、飞机状态、放行条件、限制和交叉引用；不得丢弃不同机号的差异，"
+                        "不得编造。"
+                    ),
+                },
+                {"role": "user", "content": batch},
+            ]))
+        reduced_length = len("\n\n".join(reduced))
+        if reduced_length >= previous_length:
+            raise RuntimeError("批次归纳结果未能缩短，无法在模型上下文限制内继续。")
+        summaries = reduced
+        previous_length = reduced_length
+
+    if not summaries:
+        answer_system = (
+            "你是一个飞机最低设备清单（MEL）手册助手。已检查相关文档的全部片段，"
+            "但没有找到与问题直接相关的内容。请如实告知用户，并建议核对问题描述或手册；"
+            "不得编造维修或放行程序。"
+        )
+    else:
+        summary_context = "\n\n---\n\n".join(summaries)
+        answer_system = (
+            "你是一个飞机最低设备清单（MEL）手册助手。以下内容是对相关文档全部片段进行分批分析后的归纳。"
+            "仅根据归纳资料回答，不得编造维修或放行程序。按适用 MSN/范围分别列出相关问题描述、"
+            "ECAM 警告、MEL 项目、飞机状态、放行条件、限制和交叉引用；适用性 ALL 和未标注机号的内容分别说明。"
+            "资料未覆盖的内容必须明确说明，不得将不同 MSN 的条件混为一谈。\n\n"
+            f"【分批归纳资料】\n{summary_context}"
+        )
+
+    messages = _messages_with_history(history_messages, query, answer_system)
+    stream = llm.get_client().chat.completions.create(
+        model=config.DEEPSEEK_MODEL,
+        messages=messages,
+        stream=True,
+        temperature=config.DEEPSEEK_TEMPERATURE,
+        max_tokens=config.DEEPSEEK_MAX_TOKENS,
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+    has_content = False
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        text = chunk.choices[0].delta.content
+        if isinstance(text, str) and text:
+            has_content = True
+            yield {"type": "content", "text": text}
+    if not has_content:
+        raise RuntimeError("模型未返回最终回答内容。")
+
+
 # —— —— 聊天接口（SSE流式）—— ——
 # —— ——对话接入检索 加形参top_k
-def _stream_chat(history_messages, query, top_k=None, use_knowledge_base=True):
+def _stream_chat(
+    history_messages,
+    query,
+    top_k=None,
+    use_knowledge_base=True,
+    full_document_search=False,
+):
     try:
         if use_knowledge_base:
-            if top_k is None:
-                top_k = config.RETRIEVAL_TOP_K
-            retrieved, scores = rag.retrieve(query, top_k=top_k)
+            retrieved, _ = rag.retrieve(
+                query,
+                top_k=top_k,
+                full_document_search=full_document_search,
+            )
         else:
-            retrieved, scores = [], []
-        context_texts = [c["text"] for c in retrieved]
-        system = _build_system_prompt(context_texts, use_knowledge_base)
+            retrieved = []
+        full_document_match = bool(
+            retrieved and retrieved[0].get("_retrieval_mode") == "full_document"
+        )
+        yield f"data: {json.dumps({'type': 'meta', 'retrieved_count': len(retrieved)}, ensure_ascii=False)}\n\n"
+        if full_document_match:
+            has_content = False
+            for event in _summarize_full_document(retrieved, query, history_messages):
+                if event["type"] == "content":
+                    has_content = True
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if not has_content:
+                raise RuntimeError("模型未返回最终回答内容。")
+            return
 
-        messages = [{"role": "system", "content": system}]
-        role_aliases = {
-            "msg--user": "user",
-            "msg--ai": "assistant",
-            "用户": "user",
-            "助手": "assistant",
-        }
-        for message in history_messages:
-            role = role_aliases.get(message["role"], message["role"])
-            messages.append({"role": role, "content": message["content"]})
-        messages.append({"role": "user", "content": query})
+        system = _build_system_prompt(retrieved, use_knowledge_base)
+        messages = _messages_with_history(history_messages, query, system)
 
         stream = llm.get_client().chat.completions.create(
             model=config.DEEPSEEK_MODEL,
@@ -88,19 +255,36 @@ def _stream_chat(history_messages, query, top_k=None, use_knowledge_base=True):
             stream=True,
             temperature=config.DEEPSEEK_TEMPERATURE,
             max_tokens=config.DEEPSEEK_MAX_TOKENS,
+            extra_body={"thinking": {"type": "disabled"}},
         )
 
-        # 先发检索元信息
-        yield f"data: {json.dumps({'type': 'meta', 'retrieved': context_texts, 'scores': scores}, ensure_ascii=False)}\n\n"
-
+        has_content = False
+        saw_reasoning = False
+        finish_reason = None
         for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta.content:
-                text = delta.content
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+            if getattr(delta, "reasoning_content", None):
+                saw_reasoning = True
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+            text = delta.content
+            if isinstance(text, str) and text:
+                has_content = True
                 payload = json.dumps({"type": "content", "text": text}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
 
-        yield "data: [DONE]\n\n"
+        if not has_content:
+            if saw_reasoning:
+                message = "模型只返回了推理过程，没有生成最终答案。"
+            else:
+                message = "模型没有返回文本内容"
+            if finish_reason:
+                message += f"（结束原因：{finish_reason}）"
+            payload = json.dumps({"type": "error", "message": message}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
 
     except Exception as e:
         payload = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
@@ -116,12 +300,12 @@ def chat_stream():
     query = data.get("message", "").strip()
     session_id = data.get("session_id", "").strip()
     use_knowledge_base = data.get("use_knowledge_base", True) is True
+    full_document_search = data.get("full_document_search", False) is True
 
     # 如果没有当前会话
     if not query:
         # 返回空消息
         return jsonify({"error": "empty message"}), 400
-
     # 没传session_id 或 session不存在 → 自动创建
     if not session_id:
         s = storage.create_session()
@@ -142,7 +326,10 @@ def chat_stream():
 
         # 详细处理SSE每一段消息
         for sse_line in _stream_chat(
-            history, query, use_knowledge_base=use_knowledge_base
+            history,
+            query,
+            use_knowledge_base=use_knowledge_base,
+            full_document_search=full_document_search,
         ):
             raw = sse_line.removeprefix("data: ").strip()
             if raw and raw != "[DONE]":
@@ -194,6 +381,10 @@ def upload_document():
     f = request.files['file']
     if not f.filename:
         return jsonify({"error": "No filename"}), 400
+    if storage.has_document(f.filename):
+        return jsonify({
+            "error": f"文件“{f.filename}”已存在（文件名和类型相同），请勿重复上传。"
+        }), 409
 
     try:
         content = extract_document_text(f.filename, f.read())
@@ -202,10 +393,11 @@ def upload_document():
     count = rag.index_document(f.filename, content)
     return jsonify({"filename": f.filename, "chunk_count": count})
 
-@app.route('/api/documents/<filename>', methods=['DELETE'])
-def delete_document(filename):
-    storage.remove_document(filename)
-    return jsonify({"deleted": filename})
+@app.route('/api/documents/<doc_id>', methods=['DELETE'])
+def delete_document(doc_id):
+    if not storage.remove_document(doc_id):
+        return jsonify({"error": "Document not found"}), 404
+    return jsonify({"deleted": doc_id})
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)

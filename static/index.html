@@ -48,7 +48,8 @@
         </h2>
 
         <button id="btn-upload" class="btn btn--ghost" type="button">上传文档</button>
-        <input id="file-input" type="file" accept=".pdf,.docx,.md,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain" hidden />
+        <p class="upload-hint">支持 PDF（含表格）、Word、Excel、CSV、Markdown 和 TXT；扫描 PDF 暂不支持 OCR。</p>
+        <input id="file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.md,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/markdown,text/plain" hidden />
         <p id="upload-status" class="upload-status" role="status" aria-live="polite"></p>
         <p id="knowledge-base-notice" class="knowledge-base-notice" role="status" aria-live="polite" hidden>
           当前知识库为空，请上传您的知识库内容；如果暂时不上传，也可以选择使用 DeepSeek 模型回答问题。
@@ -60,56 +61,32 @@
     <!-- ============ 主区域 ============ -->
     <main class="main">
       <header class="topbar">
-        <h2 id="current-session-title" class="topbar__title">会话dac3b1f9</h2>
+        <h2 id="current-session-title" class="topbar__title">Mini-RAG</h2>
       </header>
 
-      <div class="chat" id="chat">
-        <div class="msg msg--user">
-          <div class="msg__bubble">你好，用一句话介绍你自己</div>
-        </div>
-
-        <div class="msg msg--ai">
-          <div class="msg__bubble">
-            你好，我是DeepSeek，一个由深度求索公司创造的AI助手，乐于帮你解答各种问题！
-          </div>
-        </div>
-
-        <div class="msg msg--user">
-          <div class="msg__bubble">我刚才问了你什么？</div>
-        </div>
-
-        <div class="msg msg--ai">
-          <div class="msg__bubble">你刚才问的是："你好，用一句话介绍你自己。"</div>
-        </div>
-
-        <!-- 空状态（无会话时显示，去掉 hidden 即可）
-        <div class="empty-state">
-          <div class="empty-state__mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24">
-              <path d="M4 5.5h16v10.2H9.6L5.4 19v-3.3H4z" fill="none" stroke="currentColor"
-                    stroke-width="1.4" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <p class="empty-state__text">选择一个会话，或点击「新会话」开始提问</p>
-        </div>
-        -->
-      </div>
+      <div class="chat" id="chat"></div>
 
       <footer class="composer">
         <form class="composer__inner" action="#" method="post">
-          <label class="composer__mode" for="answer-mode">
-            回答方式
-            <select id="answer-mode" name="answer-mode">
-              <option value="knowledge">知识库问答</option>
-              <option value="deepseek">DeepSeek 通用回答</option>
-            </select>
-          </label>
+          <div class="composer__settings">
+            <label class="composer__mode" for="answer-mode">
+              回答方式
+              <select id="answer-mode" name="answer-mode">
+                <option value="knowledge">知识库问答</option>
+                <option value="deepseek">DeepSeek 通用回答</option>
+              </select>
+            </label>
+            <label class="composer__full-search" for="full-document-search">
+              <input id="full-document-search" name="full-document-search" type="checkbox" />
+              全文检索
+            </label>
+          </div>
           <textarea
             id="user-input"
             class="composer__input"
             name="question"
             rows="1"
-            placeholder="输入问题..."
+            placeholder="输入问题，完成后点击发送..."
             aria-label="输入问题"
           ></textarea>
           <button id="btn-send" class="btn btn--send" type="submit">发送</button>

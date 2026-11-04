@@ -265,6 +265,13 @@ p {
   overflow-wrap: anywhere;
 }
 
+.upload-hint {
+  margin: 6px 0 0;
+  color: var(--sidebar-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .knowledge-base-notice {
   margin: 10px 0 0;
   color: var(--sidebar-text-muted);
@@ -478,13 +485,34 @@ p {
   gap: 12px;
 }
 
+.composer__settings {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  width: 100%;
+}
+
 .composer__mode {
   display: flex;
-  flex: 0 0 100%;
   align-items: center;
   gap: 8px;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.composer__full-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.composer__full-search input {
+  margin: 0;
+  accent-color: var(--primary);
 }
 
 .composer__mode select {

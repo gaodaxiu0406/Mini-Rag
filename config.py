@@ -10,9 +10,15 @@ DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL',"")
 DEEPSEEK_TEMPERATURE = float(os.getenv('DEEPSEEK_TEMPERATURE', "0.7"))
 DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', "2048"))
 
-CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', "400"))
-CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', "100"))
-RETRIEVAL_TOP_K = int(os.getenv('RETRIEVAL_TOP_K', "4"))
+LARGE_DOCUMENT_THRESHOLD = int(os.getenv('LARGE_DOCUMENT_THRESHOLD', "100000"))
+CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', "1200"))
+CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', "300"))
+RETRIEVAL_TOP_K = int(os.getenv('RETRIEVAL_TOP_K', "20"))
+SMALL_CHUNK_SIZE = int(os.getenv('SMALL_CHUNK_SIZE', "400"))
+SMALL_CHUNK_OVERLAP = int(os.getenv('SMALL_CHUNK_OVERLAP', "100"))
+SMALL_RETRIEVAL_TOP_K = int(os.getenv('SMALL_RETRIEVAL_TOP_K', "4"))
+RETRIEVAL_BATCH_CHARS = int(os.getenv('RETRIEVAL_BATCH_CHARS', "20000"))
+RETRIEVAL_BATCH_MAX_TOKENS = int(os.getenv('RETRIEVAL_BATCH_MAX_TOKENS', "1200"))
 
 # 设置数据存放地址，规定绝对路径为当前文件夹下的data文件夹（需要手动创建data文件夹，同时在data文件夹中创建documents文件夹用于存放数据）
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')

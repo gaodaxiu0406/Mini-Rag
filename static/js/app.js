@@ -23,6 +23,8 @@
         const btnUpload = $("#btn-upload");
         const knowledgeBaseNotice = $("#knowledge-base-notice");
         const answerMode = $("#answer-mode");
+        const fullDocumentSearch = $("#full-document-search");
+        let documentNames = new Set();
 
         /**
          * api请求方法
@@ -75,6 +77,9 @@
             del.textContent = "×";
             del.addEventListener("click", (e) => {
                 e.stopPropagation();
+                if (!window.confirm(`确认删除会话“${s.title || "未命名"}”吗？此操作无法撤销。`)) {
+                    return;
+                }
                 deleteSession(s.id);
             });
 
@@ -84,14 +89,28 @@
         });
     }
 
+    function renderEmptyChat(message) {
+        messagesEl.innerHTML = "";
+        const emptyState = document.createElement("div");
+        emptyState.className = "empty-state";
+        const text = document.createElement("p");
+        text.className = "empty-state__text";
+        text.textContent = message;
+        emptyState.appendChild(text);
+        messagesEl.appendChild(emptyState);
+    }
+
     // 切换会话按钮
     async function switchSession(id) {
-        state.activeSessionId = id;
-        // 根据会话id获取会话数据
         const sess = await api("GET", `/sessions/${id}`);
+        state.activeSessionId = id;
         messagesEl.innerHTML = "";
         if (sess && sess.messages) {
-            sess.messages.forEach(msg => addMessage(msg.role, msg.content));
+            if (sess.messages.length) {
+                sess.messages.forEach(msg => addMessage(msg.role, msg.content));
+            } else {
+                renderEmptyChat("这是一个新会话，输入问题开始对话。");
+            }
             sessionTitle.textContent = sess ? sess.title : "Mini-RAG";
             scrollBottom();
             btnSend.disabled = false;
@@ -104,15 +123,19 @@
         await api("DELETE", `/sessions/${id}`);
         if (state.activeSessionId === id) {
             state.activeSessionId = null;
-            messagesEl.innerHTML = "";
+            renderEmptyChat("选择一个会话，或点击「新会话」开始提问。");
             sessionTitle.textContent = "选择一个会话";
-            btnSend.disabled = true;
+            btnSend.disabled = false;
         }
         await loadSessions();
+        if (!state.activeSessionId && state.session.length) {
+            await switchSession(state.session[0].id);
+        }
     }
 
     // —— —— 消息渲染辅助函数 —— ——
     function addMessage(role, content, idHint) {
+        messagesEl.querySelector(".empty-state")?.remove();
         const div = document.createElement("div");
         const divContent = document.createElement("div");
         const roleClass = {
@@ -137,6 +160,9 @@
     // —— —— 对话接入检索 —— ——
     async function loadDocuments() {
         const docs = await api("GET", "/documents");
+        documentNames = new Set(
+            docs.map((document) => document.filename.normalize("NFC").toLocaleLowerCase())
+        );
         docList.innerHTML = "";
         docs.forEach((d) => {
             const li = document.createElement("li");
@@ -148,7 +174,10 @@
             del.textContent = "×";
             del.addEventListener("click", async (e) => {
                 e.stopPropagation();
-                await api("DELETE", `/documents/${encodeURIComponent(d.filename)}`);
+                if (!window.confirm(`确认删除文件“${d.filename}”吗？此操作无法撤销。`)) {
+                    return;
+                }
+                await api("DELETE", `/documents/${encodeURIComponent(d.id)}`);
                 await loadDocuments();
             });
             li.appendChild(del);
@@ -162,14 +191,26 @@
         } else if (answerMode.value === "deepseek" && state.documentsAvailable === false) {
             answerMode.value = "knowledge";
         }
+        fullDocumentSearch.disabled = !hasDocuments || answerMode.value !== "knowledge";
         state.documentsAvailable = hasDocuments;
     }
+
+    answerMode.addEventListener("change", () => {
+        fullDocumentSearch.disabled =
+            !state.documentsAvailable || answerMode.value !== "knowledge";
+    });
 
     btnUpload.addEventListener("click", () => fileInput.click());
 
     fileInput.addEventListener("change", async () => {
         const file = fileInput.files[0];
         if (!file) return;
+        const normalizedFilename = file.name.normalize("NFC").toLocaleLowerCase();
+        if (documentNames.has(normalizedFilename)) {
+            uploadStatus.textContent = `文件“${file.name}”已存在（文件名和类型相同），请勿重复上传；如需更新请先删除已有文件。`;
+            fileInput.value = "";
+            return;
+        }
         uploadStatus.textContent = "上传中...";
         try {
             const formData = new FormData();
@@ -222,51 +263,80 @@
                     message: query,
                     session_id: state.activeSessionId,
                     use_knowledge_base: answerMode.value === "knowledge",
+                    full_document_search: fullDocumentSearch.checked,
                 }),
                 signal: ctrl.signal
             });
+            if (!res.ok) {
+                throw new Error(`聊天请求失败（HTTP ${res.status}）`);
+            }
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
             let started = false;
+            let completed = false;
 
-            // 对于返回的每一个字节依次处理
-            while(true) {
+            const processLine = (line) => {
+                if (!line.startsWith("data: ")) return;
+                const raw = line.slice(6).trim();
+                if (!raw) return;
+                if (raw === "[DONE]") {
+                    completed = true;
+                    return;
+                }
+
+                const data = JSON.parse(raw);
+                if (data.type === "content") {
+                    if (!started) {
+                        botDiv.textContent = "";
+                        started = true;
+                    }
+                    botDiv.textContent += data.text;
+                    scrollBottom();
+                } else if (data.type === "error") {
+                    if (!started) {
+                        botDiv.textContent = "";
+                        started = true;
+                    }
+                    botDiv.textContent += `[错误：${data.message}]`;
+                } else if (data.type === "progress" && !started) {
+                    botDiv.textContent = data.text;
+                }
+            };
+
+            while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
+                if (done) {
+                    buffer += decoder.decode();
+                    break;
+                }
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split("\n");
                 buffer = lines.pop(); // 保留未完成的行
 
                 for (const line of lines) {
-                    if (!line.startsWith("data: ")) continue;
-                    const raw = line.slice(6).trim();
-                    if (!raw || raw === "[DONE]") continue;
                     try {
-                        const data = JSON.parse(raw);
-                        if (data.type === "content") {
-                            if (!started) {
-                                botDiv.textContent = "";
-                                started = true;
-                            }
-                            botDiv.textContent += data.text;
-                            scrollBottom();
-                        } else if (data.type === "error") {
-                            if (!started) {
-                                botDiv.textContent = "";
-                                started = true;
-                            }
-                            botDiv.textContent += `[错误：${data.message}]`
-                        } else if (data.type === "meta"){
-                        // 检索元信息，不渲染文本
-                        }
-                    } catch (e) {}
+                        processLine(line);
+                    } catch (error) {
+                        throw new Error(`无法解析流式响应：${error.message}`);
+                    }
                 }
             }
-            
-            if (!started) botDiv.textContent = "(已终止回答)";
+
+            if (buffer.trim()) {
+                try {
+                    processLine(buffer);
+                } catch (error) {
+                    throw new Error(`无法解析流式响应：${error.message}`);
+                }
+            }
+            if (!started) {
+                botDiv.textContent = completed
+                    ? "模型未返回文本内容。"
+                    : "连接已结束，但未收到回答内容。";
+            }
         } catch (err) {
             if (err.name === "AbortError") {
                 botDiv.textContent += "\n(已终止回答)";
@@ -284,7 +354,7 @@
     btnNew.addEventListener("click", async () => {
         const sess = await api("POST", "/sessions");
         state.activeSessionId = sess.id;
-        messagesEl.innerHTML = "";
+        renderEmptyChat("这是一个新会话，输入问题开始对话。");
         sessionTitle.textContent = sess.title || "Mini-RAG";
         btnSend.disabled = false;
         // 异步刷新
@@ -296,23 +366,27 @@
         if (!btnSend.disabled) sendMessage();
     });
 
-    userInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            if (!btnSend.disabled) sendMessage();
-        }
-    });
-
     userInput.addEventListener("input", () => {
         userInput.style.height = "auto";
         userInput.style.height = Math.min(userInput.scrollHeight);
     })
     // 初始加载
     async function init() {
-        // 刷新会话列表
-        await loadSessions();
-        // 刷新文档列表
-        await loadDocuments();
+        try {
+            await loadSessions();
+            if (state.session.length) {
+                await switchSession(state.session[0].id);
+            } else {
+                state.activeSessionId = null;
+                sessionTitle.textContent = "Mini-RAG";
+                renderEmptyChat("还没有对话记录，点击「新会话」或输入问题开始。");
+                btnSend.disabled = false;
+            }
+            await loadDocuments();
+        } catch (error) {
+            console.error("页面初始化失败：", error);
+            uploadStatus.textContent = `加载失败：${error.message}`;
+        }
     }
 
     init();
