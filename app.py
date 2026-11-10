@@ -17,6 +17,13 @@ def index():
 def favicon():
     return Response(status=204)
 
+@app.route('/api/app-config', methods=['GET'])
+def get_app_config():
+    return jsonify({
+        "has_server_api_key": bool(config.DEEPSEEK_API_KEY),
+        "display_max_chars": config.CHAT_DISPLAY_MAX_CHARS,
+    })
+
 # 会话接口
 @app.route('/api/sessions', methods=['GET'])
 def list_sessions():
@@ -99,8 +106,8 @@ def _text_batches(texts, max_chars):
     return batches
 
 
-def _complete_summary(messages):
-    response = llm.get_client().chat.completions.create(
+def _complete_summary(messages, api_key=None):
+    response = llm.get_client(api_key).chat.completions.create(
         model=config.DEEPSEEK_MODEL,
         messages=messages,
         stream=False,
@@ -116,7 +123,7 @@ def _complete_summary(messages):
     return text.strip()
 
 
-def _summarize_full_document(retrieved, query, history_messages):
+def _summarize_full_document(retrieved, query, history_messages, api_key=None):
     chunk_texts = [
         (
             f"【文件：{chunk.get('filename', '未知')}；"
@@ -147,7 +154,7 @@ def _summarize_full_document(retrieved, query, history_messages):
                 "role": "user",
                 "content": f"问题：{query}\n\n请分析以下手册片段：\n{batch}",
             },
-        ])
+        ], api_key)
         if summary != "NO_RELEVANT_INFO":
             summaries.append(summary)
 
@@ -170,7 +177,7 @@ def _summarize_full_document(retrieved, query, history_messages):
                     ),
                 },
                 {"role": "user", "content": batch},
-            ]))
+            ], api_key))
         reduced_length = len("\n\n".join(reduced))
         if reduced_length >= previous_length:
             raise RuntimeError("批次归纳结果未能缩短，无法在模型上下文限制内继续。")
@@ -194,7 +201,7 @@ def _summarize_full_document(retrieved, query, history_messages):
         )
 
     messages = _messages_with_history(history_messages, query, answer_system)
-    stream = llm.get_client().chat.completions.create(
+    stream = llm.get_client(api_key).chat.completions.create(
         model=config.DEEPSEEK_MODEL,
         messages=messages,
         stream=True,
@@ -203,13 +210,16 @@ def _summarize_full_document(retrieved, query, history_messages):
         extra_body={"thinking": {"type": "disabled"}},
     )
     has_content = False
-    for chunk in stream:
-        if not chunk.choices:
-            continue
-        text = chunk.choices[0].delta.content
-        if isinstance(text, str) and text:
-            has_content = True
-            yield {"type": "content", "text": text}
+    try:
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            text = chunk.choices[0].delta.content
+            if isinstance(text, str) and text:
+                has_content = True
+                yield {"type": "content", "text": text}
+    finally:
+        stream.close()
     if not has_content:
         raise RuntimeError("模型未返回最终回答内容。")
 
@@ -222,7 +232,9 @@ def _stream_chat(
     top_k=None,
     use_knowledge_base=True,
     full_document_search=False,
+    api_key=None,
 ):
+    stream = None
     try:
         if use_knowledge_base:
             retrieved, _ = rag.retrieve(
@@ -236,20 +248,49 @@ def _stream_chat(
             retrieved and retrieved[0].get("_retrieval_mode") == "full_document"
         )
         yield f"data: {json.dumps({'type': 'meta', 'retrieved_count': len(retrieved)}, ensure_ascii=False)}\n\n"
+        if not full_document_match:
+            progress = {
+                "type": "progress",
+                "text": f"已检索到 {len(retrieved)} 个片段，正在分批分析第 1/1 批。",
+            }
+            yield f"data: {json.dumps(progress, ensure_ascii=False)}\n\n"
+        if not api_key and not config.DEEPSEEK_API_KEY:
+            if not retrieved:
+                answer = "未配置 DeepSeek API Key，当前仅支持本地知识库检索；知识库中也没有找到相关片段。"
+            else:
+                snippets = retrieved[:8]
+                answer = (
+                    "未配置 DeepSeek API Key，当前仅展示本地知识库检索结果。"
+                    "登录 DeepSeek 后可生成完整回答。\n\n"
+                    + "\n\n---\n\n".join(
+                        f"【{chunk.get('filename', '未知文件')} · "
+                        f"适用机号：{chunk.get('_msn_applicability', '未标注')}】\n"
+                        f"{chunk.get('text', '')[:1200]}"
+                        for chunk in snippets
+                    )
+                )
+            yield f"data: {json.dumps({'type': 'content', 'text': answer}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
         if full_document_match:
             has_content = False
-            for event in _summarize_full_document(retrieved, query, history_messages):
-                if event["type"] == "content":
-                    has_content = True
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            events = _summarize_full_document(retrieved, query, history_messages, api_key)
+            try:
+                for event in events:
+                    if event["type"] == "content":
+                        has_content = True
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            finally:
+                events.close()
             if not has_content:
                 raise RuntimeError("模型未返回最终回答内容。")
+            yield "data: [DONE]\n\n"
             return
 
         system = _build_system_prompt(retrieved, use_knowledge_base)
         messages = _messages_with_history(history_messages, query, system)
 
-        stream = llm.get_client().chat.completions.create(
+        stream = llm.get_client(api_key).chat.completions.create(
             model=config.DEEPSEEK_MODEL,
             messages=messages,
             stream=True,
@@ -290,7 +331,9 @@ def _stream_chat(
         payload = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
         yield f"data: {payload}\n\n"
     finally:
-        yield "data: [DONE]\n\n"
+        if stream is not None:
+            stream.close()
+    yield "data: [DONE]\n\n"
 
 
 @app.route('/api/chat/stream', methods=['POST'])
@@ -301,11 +344,14 @@ def chat_stream():
     session_id = data.get("session_id", "").strip()
     use_knowledge_base = data.get("use_knowledge_base", True) is True
     full_document_search = data.get("full_document_search", False) is True
+    api_key = request.headers.get("X-DeepSeek-API-Key", "").strip() or None
 
     # 如果没有当前会话
     if not query:
         # 返回空消息
         return jsonify({"error": "empty message"}), 400
+    if not use_knowledge_base and not (api_key or config.DEEPSEEK_API_KEY):
+        return jsonify({"error": "请先登录并配置 DeepSeek API Key，或切换到知识库问答。"}), 401
     # 没传session_id 或 session不存在 → 自动创建
     if not session_id:
         s = storage.create_session()
@@ -325,20 +371,25 @@ def chat_stream():
         failed = False
 
         # 详细处理SSE每一段消息
-        for sse_line in _stream_chat(
+        events = _stream_chat(
             history,
             query,
             use_knowledge_base=use_knowledge_base,
             full_document_search=full_document_search,
-        ):
-            raw = sse_line.removeprefix("data: ").strip()
-            if raw and raw != "[DONE]":
-                event = json.loads(raw)
-                if event.get("type") == "content":
-                    full_answer += event.get("text", "")
-                elif event.get("type") == "error":
-                    failed = True
-            yield sse_line
+            api_key=api_key,
+        )
+        try:
+            for sse_line in events:
+                raw = sse_line.removeprefix("data: ").strip()
+                if raw and raw != "[DONE]":
+                    event = json.loads(raw)
+                    if event.get("type") == "content":
+                        full_answer += event.get("text", "")
+                    elif event.get("type") == "error":
+                        failed = True
+                yield sse_line
+        finally:
+            events.close()
 
         if failed or not session:
             return

@@ -48,11 +48,12 @@
         </h2>
 
         <button id="btn-upload" class="btn btn--ghost" type="button">上传文档</button>
-        <p class="upload-hint">支持 PDF（含表格）、Word、Excel、CSV、Markdown 和 TXT；扫描 PDF 暂不支持 OCR。</p>
-        <input id="file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.md,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/markdown,text/plain" hidden />
-        <p id="upload-status" class="upload-status" role="status" aria-live="polite"></p>
+        <p class="upload-hint">支持 PDF（含表格）、Word、Excel、CSV、Markdown 和 TXT；扫描 PDF 暂不支持 OCR。上传过程中可继续添加文件，系统会排队处理。</p>
+        <input id="file-input" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.md,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/markdown,text/plain" hidden />
+        <div id="upload-status" class="upload-status" role="status" aria-live="polite" aria-busy="false" hidden></div>
+        <p id="document-action-status" class="document-action-status" role="status" aria-live="polite" aria-busy="false" hidden></p>
         <p id="knowledge-base-notice" class="knowledge-base-notice" role="status" aria-live="polite" hidden>
-          当前知识库为空，请上传您的知识库内容；如果暂时不上传，也可以选择使用 DeepSeek 模型回答问题。
+          当前知识库为空，请上传文档；配置 DeepSeek API Key 后可启用通用回答。
         </p>
         <ul id="doc-list" class="doc-list" aria-label="已上传文档"></ul>
       </div>
@@ -61,7 +62,9 @@
     <!-- ============ 主区域 ============ -->
     <main class="main">
       <header class="topbar">
+        <button id="btn-menu" class="topbar__menu" type="button" aria-label="打开菜单" aria-expanded="false">☰</button>
         <h2 id="current-session-title" class="topbar__title">Mini-RAG</h2>
+        <button id="btn-auth" class="btn btn--account" type="button">登录 DeepSeek</button>
       </header>
 
       <div class="chat" id="chat"></div>
@@ -69,16 +72,26 @@
       <footer class="composer">
         <form class="composer__inner" action="#" method="post">
           <div class="composer__settings">
-            <label class="composer__mode" for="answer-mode">
-              回答方式
-              <select id="answer-mode" name="answer-mode">
-                <option value="knowledge">知识库问答</option>
-                <option value="deepseek">DeepSeek 通用回答</option>
-              </select>
-            </label>
+            <fieldset class="composer__mode">
+              <legend>回答方式</legend>
+              <div class="composer__mode-options">
+                <label class="composer__mode-option">
+                  <input id="answer-mode-knowledge" name="answer-mode" type="radio" value="knowledge" checked />
+                  <span>知识库问答</span>
+                </label>
+                <label class="composer__mode-option">
+                  <input id="answer-mode-deepseek" name="answer-mode" type="radio" value="deepseek" />
+                  <span>DeepSeek 通用回答</span>
+                </label>
+              </div>
+            </fieldset>
             <label class="composer__full-search" for="full-document-search">
               <input id="full-document-search" name="full-document-search" type="checkbox" />
               全文检索
+            </label>
+            <label class="composer__full-response" for="full-response">
+              <input id="full-response" name="full-response" type="checkbox" />
+              完整显示回复
             </label>
           </div>
           <textarea
@@ -95,6 +108,22 @@
     </main>
 
   </div>
+  <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="关闭菜单" hidden></button>
+
+  <dialog id="auth-dialog" class="auth-dialog" aria-labelledby="auth-title">
+    <form id="auth-form">
+      <h2 id="auth-title">登录 DeepSeek</h2>
+      <p class="auth-dialog__hint">输入 API Key 以启用 DeepSeek 通用回答。密钥仅保存在当前浏览器会话中。</p>
+      <label class="auth-dialog__label" for="api-key-input">DeepSeek API Key</label>
+      <input id="api-key-input" class="auth-dialog__input" type="password" autocomplete="new-password" spellcheck="false" />
+      <p id="auth-status" class="auth-dialog__status" role="status"></p>
+      <div class="auth-dialog__actions">
+        <button id="btn-auth-delete" class="btn btn--delete-key" type="button" hidden>删除已保存密钥</button>
+        <button id="btn-auth-cancel" class="btn btn--cancel" type="button">取消</button>
+        <button class="btn btn--primary" type="submit">保存并登录</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="./js/app.js"></script>
 </body>
 </html>
-<script src="./js/app.js"></script>

@@ -3,17 +3,15 @@ from openai import OpenAI
 
 import config
 
-# 创建全局
-_client = None
+_clients = {}
 
-def get_client():
-    global _client
-    if _client is None:
-        key = config.DEEPSEEK_API_KEY
-        if not key:
-            raise ValueError("DEEPSEEK_API_KEY 未配置，请先创建 .env 文件并设置 DEEPSEEK_API_KEY")
-        _client = OpenAI(api_key=key, base_url=config.DEEPSEEK_BASE_URL)
-    return _client
+def get_client(api_key=None):
+    key = api_key or config.DEEPSEEK_API_KEY
+    if not key:
+        raise ValueError("未配置 DeepSeek API Key，请登录后输入密钥。")
+    if key not in _clients:
+        _clients[key] = OpenAI(api_key=key, base_url=config.DEEPSEEK_BASE_URL)
+    return _clients[key]
 
 # 对话方法
 def chat_stream(messages):
