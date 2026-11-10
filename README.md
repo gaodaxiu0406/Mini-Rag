@@ -10,8 +10,12 @@
 
 ![桌面版界面截图](docs/screenshot.png)
 
-![手机版界面截图](docs/screenshot-mobile-1.png)
-![手机版界面截图](docs/screenshot-mobile-2.png)
+<img src="docs/screenshot-mobile-1.png" width="40%">
+
+<img src="docs/screenshot-mobile-2.png" width="40%">
+
+<!-- ![手机版界面截图](docs/screenshot-mobile-1.png)
+![手机版界面截图](docs/screenshot-mobile-2.png) -->
 
 ## 版本更新记录
 
