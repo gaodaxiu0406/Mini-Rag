@@ -58,16 +58,11 @@ def delete_session(session_id):
 # —— —— 对话接入检索 —— ——
 def _build_system_prompt(context_texts, use_knowledge_base=True):
     if context_texts:
-        ctx = "\n---\n".join(
-            f"【适用机号：{chunk.get('_msn_applicability', '未标注')}】\n{chunk['text']}"
-            for chunk in context_texts
-        )
+        ctx = "\n---\n".join(chunk["text"] for chunk in context_texts)
         return (
-            "你是一个飞机最低设备清单（MEL）手册助手。仅根据提供的手册资料回答，不得编造维修或放行程序。"
-            "回答故障问题时，尽可能完整列出相关 ECAM 警告、MEL 项目、飞机状态和放行条件，保留原文中的编号、限制和交叉引用。"
-            "请汇总参考资料中所有与问题相关的适用 MSN 或 MSN 范围，并按 MSN/范围列出各自对应的问题描述、ECAM 警告、MEL 项目及关键条件；"
-            "适用性为 ALL 的内容单独标明，未标注机号的内容明确写“手册未标注适用机号，需人工核实”。"
-            "不要把不同条目或机号的条件混为一谈，也不要声称已覆盖整个手册；仅报告参考资料中实际检索到的内容。\n\n"
+            "你是一个通用知识库助手。仅根据提供的参考资料回答；资料未提供答案时，请明确说明，不要编造。"
+            "保留资料中的关键术语、名称、编号、条件、限制和引用，不要混淆不同条目中的信息。"
+            "仅报告实际检索到的内容，不要声称已覆盖整个文档。\n\n"
             f"【参考资料】\n{ctx}"
         )
     if not use_knowledge_base:
@@ -127,8 +122,7 @@ def _summarize_full_document(retrieved, query, history_messages, api_key=None):
     chunk_texts = [
         (
             f"【文件：{chunk.get('filename', '未知')}；"
-            f"片段：{chunk.get('chunk_index', index)}；"
-            f"适用机号：{chunk.get('_msn_applicability', '未标注')}】\n"
+            f"片段：{chunk.get('chunk_index', index)}】\n"
             f"{chunk['text']}"
         )
         for index, chunk in enumerate(retrieved, 1)
@@ -144,9 +138,9 @@ def _summarize_full_document(retrieved, query, history_messages, api_key=None):
             {
                 "role": "system",
                 "content": (
-                    "你是飞机 MEL 手册资料归纳助手。只保留与用户问题直接相关的内容；"
-                    "逐项保留适用 MSN/范围、问题或 ECAM 描述、MEL 编号、飞机状态、放行条件、限制和交叉引用。"
-                    "不同 MSN 或 MEL 条目不得合并条件，不得补充原文没有的信息。"
+                    "你是一个通用知识库资料归纳助手。只保留与用户问题直接相关的内容；"
+                    "保留原文中的关键术语、名称、编号、条件、限制和引用，并区分不同对象或条目。"
+                    "不得补充原文没有的信息。"
                     "若本批无相关资料，只输出 NO_RELEVANT_INFO。"
                 ),
             },
@@ -171,9 +165,8 @@ def _summarize_full_document(retrieved, query, history_messages, api_key=None):
                 {
                     "role": "system",
                     "content": (
-                        "合并这些飞机 MEL 资料归纳。完整保留所有不同的适用 MSN/范围、问题描述、"
-                        "MEL 编号、飞机状态、放行条件、限制和交叉引用；不得丢弃不同机号的差异，"
-                        "不得编造。"
+                        "合并这些知识库资料归纳。保留所有不同对象或条目的关键信息、条件、限制和引用；"
+                        "不得混淆其差异或编造内容。"
                     ),
                 },
                 {"role": "user", "content": batch},
@@ -186,17 +179,15 @@ def _summarize_full_document(retrieved, query, history_messages, api_key=None):
 
     if not summaries:
         answer_system = (
-            "你是一个飞机最低设备清单（MEL）手册助手。已检查相关文档的全部片段，"
-            "但没有找到与问题直接相关的内容。请如实告知用户，并建议核对问题描述或手册；"
-            "不得编造维修或放行程序。"
+            "你是一个通用知识库助手。已检查相关文档的全部片段，但没有找到与问题直接相关的内容。"
+            "请如实告知用户，并建议核对问题描述或资料；不得编造答案。"
         )
     else:
         summary_context = "\n\n---\n\n".join(summaries)
         answer_system = (
-            "你是一个飞机最低设备清单（MEL）手册助手。以下内容是对相关文档全部片段进行分批分析后的归纳。"
-            "仅根据归纳资料回答，不得编造维修或放行程序。按适用 MSN/范围分别列出相关问题描述、"
-            "ECAM 警告、MEL 项目、飞机状态、放行条件、限制和交叉引用；适用性 ALL 和未标注机号的内容分别说明。"
-            "资料未覆盖的内容必须明确说明，不得将不同 MSN 的条件混为一谈。\n\n"
+            "你是一个通用知识库助手。以下内容是对相关文档全部片段进行分批分析后的归纳。"
+            "仅根据归纳资料回答，保留相关对象或条目之间的区别，不得编造。"
+            "资料未覆盖的内容必须明确说明。\n\n"
             f"【分批归纳资料】\n{summary_context}"
         )
 
@@ -262,9 +253,8 @@ def _stream_chat(
                 answer = (
                     "未配置 DeepSeek API Key，当前仅展示本地知识库检索结果。"
                     "登录 DeepSeek 后可生成完整回答。\n\n"
-                    + "\n\n---\n\n".join(
-                        f"【{chunk.get('filename', '未知文件')} · "
-                        f"适用机号：{chunk.get('_msn_applicability', '未标注')}】\n"
+                    +                     "\n\n---\n\n".join(
+                        f"【{chunk.get('filename', '未知文件')}】\n"
                         f"{chunk.get('text', '')[:1200]}"
                         for chunk in snippets
                     )
