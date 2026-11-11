@@ -10,9 +10,11 @@
 
 ![桌面版界面截图](docs/screenshot.png)
 
-<img src="docs/screenshot-mobile-1.png" width="40%" display='inline-block' margin-right='5%'>
-
-<img src="docs/screenshot-mobile-2.png" width="40%" display='inline-block'>
+<div align="center">
+  <img src="docs/screenshot-mobile-1.png" width="45%">
+  
+  <img src="docs/screenshot-mobile-2.png" width="45%">
+</div>
 
 ## 版本更新记录
 
